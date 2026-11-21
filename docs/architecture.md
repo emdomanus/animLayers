@@ -1,236 +1,142 @@
----
-aside: false
-sidebar: false
-pageClass: architecture-page
----
-
 # Architecture
 
-AnimGraph is a caller-scheduled graph runtime with absolute-time evaluation. A
-caller supplies one explicit coordinate per update and borrowed time readers.
-The controller owns a coherent transaction, layers pass literal time samples
-through the graph, and the injected backend owns physical clip phase.
+## Source layout
 
-AnimGraph owns no clock, RunService connection, character policy, or consumer
-playback handle.
+The package root is `src/`. Everything in it runs on the server and on the client, so no module
+sits in a `shared`, `server` or `client` folder.
 
-<script setup>
-import runtimeDiagram from "./assets/animgraph-runtime.svg";
-import completionDiagram from "./assets/animgraph-completion.svg";
-</script>
+```text
+src/shared.luau                                              the entry pesde.toml names as lib
+src/controllers/layerController/layerController.luau         the controller: layers, play ids, the speed tolerance, completion reports
+src/managers/trackManager/trackManager.luau                  the engine side: tracks, signal connections, every engine call
+src/utils/clipDefinition/clipDefinition.luau                 build(assetId, looped)
+src/types/controllers/layerController/layerController/
+  public.luau                                                LayerController, LayerControllerOwned, LayerDefinition, Unsubscribe
+  private.luau                                               LayerControllerImpl and its layer and marker records
+src/types/managers/trackManager/trackManager/
+  public.luau                                                TrackManagerOwned, the view the controller holds
+  private.luau                                               TrackManagerImpl and its track and marker records
+src/types/def/playback/clipDefinition/
+  public.luau                                                ClipDefinition
+  private.luau                                               ClipDefinitionImpl, which adds the Animation
+```
 
-<ZoomableDiagram
-  :src="runtimeDiagram"
-  alt="AnimGraph explicit-time evaluation and backend strategy ownership"
-  height="min(78vh, 920px)"
-/>
+The entry hands out `layerController` and `clipDefinition`. `trackManager` is constructed by the
+controller and reached by nothing else; its `public.luau` leaf is the view its one holder reads, and
+no type of it is exported.
 
-<ZoomableDiagram
-  :src="completionDiagram"
-  alt="AnimGraph backend completion, tombstone, controller, and event flow"
-  height="min(46vh, 420px)"
-/>
+The controller requires `callbackList` from the `emdomanus/luau_utils` package, its one dependency,
+for its two kinds of subscriber list.
 
-The authored diagram sources are under `docs/diagrams`; generated SVGs are
-checked in under `docs/assets`. Roblox instances and mutable playback operations
-stay private. Global marker callbacks receive the existing playback object
-through its narrow, read-only `TrackMarkerSource` contract.
+## Two objects
 
-## Ownership
+```luau
+LayerController = { layers, play ids, _trackManager }        -- decides what plays
+TrackManager    = { tracks, _playingBySlot }                 -- calls the engine
+```
 
-| Owner | Owns | Does not own |
+A layer's index in the layer definitions is its slot in the track manager, and a slot holds one
+playing track or none. The controller calls `trackManager:play(slot, clip, ...)`,
+`trackManager:stop(slot, fadeTime)`, `trackManager:adjustSpeed(slot, speed)` and so on; no
+`AnimationTrack` crosses to the controller. When the engine ends a slot's track by itself, the
+manager calls the function the controller gave it at construction, `slotEnded(slot)`, which records
+the end on the layer.
+
+A clip definition is `ClipDefinitionImpl` inside the package: `clipDefinition.build` writes its
+`animation` field and `trackManager` reads it for `LoadAnimation`. The public `ClipDefinition` does
+not declare the field.
+
+## Commands are state
+
+```luau
+Layer = {
+	-- asked for
+	weight: number, timeScale: number,                           -- the layer's own; they stay across plays
+	playId: number?, clip: ClipDefinition?, speed: number,       -- the clip's; set by each play
+	-- given to the track manager
+	appliedPlayId: number?, appliedClip: ClipDefinition?, playing: boolean,
+	appliedSpeed: number, appliedWeight: number,
+	changed: boolean,
+}
+```
+
+`play`, `stop`, `setClipSpeed`, `setClipTime`, `setClipNormalizedTime`, `setLayerWeight` and `setLayerTimeScale`
+write the "asked for" fields of one layer, set `layer.changed` and the controller's `_changed`, and
+return. None of them calls the engine.
+
+## update
+
+`LayerController.update` does three things, in this order:
+
+1. Returns if `_changed` is false.
+2. For each layer with `changed` set, `reconcileLayer` compares the two halves of the layer and has
+   the track manager make one engine call per difference: `Stop` on the outgoing track,
+   `LoadAnimation` when the clip has no idle track, the `Priority` write when the track's last one
+   differs, `Play`, `AdjustWeight`, the `TimePosition` write, `AdjustSpeed`. Each "given to the
+   track manager" field is written after its call returned.
+3. For each layer whose play was recorded as completed, empties the layer and calls the
+   `onPlayCompleted` subscribers.
+
+An engine call that raises makes `update` raise at that call. The commands are as the caller left
+them, the applied fields describe exactly the calls that returned, and `_changed` is still set, so
+the next `update` makes the remaining calls. A `Stop` that raised is the exception: its track was
+marked as stopped before the call (see Tracks), so it is not stopped again.
+
+A layer stays `changed` while a position waits for its track's `Length` to load; each `update` then
+reads `Length` once for that track.
+
+## Tracks
+
+```luau
+Track = { clip: ClipDefinition, track: AnimationTrack, state: "idle" | "playing" | "fading", slot: number, lastPlayed: number }
+```
+
+| State | Meaning | Leaves it when |
 | --- | --- | --- |
-| Consumer scheduler | Sampling cadence, finite monotonic `sampleTime`, time mappings, continuity/discontinuity policy, native re-addressing | Graph state or backend generations |
-| `AnimationController` | Command queue, reader cache, atomic sample preflight, layers, parameters, events, request transaction | A clock or physical clip phase |
-| `LayerRuntime` | Reader precedence, literal sample propagation, layer composition | Time mapping, physical position, or Roblox timing |
-| Motion graph | State selection, transition anchors, blend evaluation, backend-neutral requests | Reader selection, discontinuity policy, or concrete tracks |
-| `AnimationBackend` | Physical generations, positioning, completion, teardown, fixed position strategy | State-machine progression or consumer clock mapping |
-| `RobloxAnimatorBackend` | Native or sampled playback strategy, Roblox objects, priority mapping, fades, tombstones | Consumer scheduling or graph clocks |
+| `idle` | free to be played | `trackManager:play` plays it |
+| `playing` | in a slot | `trackManager:stop`, or the engine reports its end |
+| `fading` | stopped or ended, waiting for the engine | the engine fires `Ended`; `stopAll` |
 
-`StackModifier` is a separate numeric utility and does not participate in this
-transaction.
+A track's state is changed before the engine call that causes it. `trackManager:stop` marks the
+track `fading` and empties its slot, and then calls `Stop`. So a `Stopped` the engine fires inside
+that call is not read as the track ending by itself, and an `Ended` fired inside it returns the
+track to `idle`.
 
-## Dependency direction
+A play takes an idle track of its clip, or loads one. A clip whose only track is `fading` gets a
+second track. Tracks are destroyed by `deconstruct`, and when a load takes the count above 64: the
+idle track with the smallest `lastPlayed` is then destroyed. A `playing` or `fading` track is never
+destroyed for the cap.
 
-```text
-consumer scheduler/readers
-    -> AnimationController
-    -> LayerRuntime / MotionNode evaluation
-    -> AnimationBackend
-    -> Roblox playback strategy
-```
+Roblox limits the tracks playing at once on one `Animator` (64, per Roblox staff on the DevForum in
+January 2026), not the tracks loaded, so the cap is a memory bound and not an engine one.
 
-Public contracts live below `src/animGraph/types`. Motion nodes know no Roblox
-types. The controller depends on the backend interface, not the Roblox
-implementation.
+## Engine signals
 
-## Source layout and package boundary
+Each track has one `Stopped` and one `Ended` connection for its whole life.
 
-All package implementation modules are available on both server and client and
-live under an owner-level `shared` domain. The Roblox backend is also shared:
-the caller supplies its Animator. The development client and host test tooling
-remain outside the deployed package source.
+- `Stopped`, while the track is `playing` and `track.IsPlaying` is false: the engine ended the
+  track. The manager empties the slot and calls the controller's `slotEnded`. A clip that does not
+  loop is recorded as completed on its layer; a looping clip is played again by the next `update`.
+  The `IsPlaying` test discards a signal that arrives after the track was played again.
+- `Ended`, while the track is `fading`: the track becomes `idle`.
+- A marker signal calls that marker's subscribers directly, when its track is `playing`.
 
-```text
-src/init.luau                         # Pesde/Roblox package entrypoint
-src/animGraph/
-  controller/animationController/shared/animationController/
-    init.luau
-    parameterStore.luau
-    eventBus.luau
-  backends/robloxAnimatorBackend/shared/robloxAnimatorBackend/
-    init.luau
-    animPlayback.luau
-    sampledAnimPlayback.luau
-  motions/clipNode/shared/clipNode.luau
-  runtime/layerRuntime/shared/layerRuntime.luau
-  types/                             # mirrors object ownership above
-    def/animation/shared/animation.luau
-    def/animationPlayback/shared/robloxPlayback.luau
-    ports/backends/animationPlayback/shared/trackMarkerSource.luau
-```
+The first two only write fields and set `_changed`. `update` is where the completion subscribers
+are called.
 
-Private children inherit their owner's domain. Objects without private children
-use a named file instead of a directory containing only `init.luau`. Canonical
-object types keep public surfaces and private implementation records together;
-the backend's private playback types mirror its implementation children.
-Playback descriptors are lower-level data definitions, so a playback type never
-needs to require its owning backend type aggregate.
+## What ends a play
 
-The root imports canonical leaves directly and selects the supported constructors
-and consumer types. It replaces the redundant inner value/type aggregates.
-Constructor exports contain `.new`, while instance methods stay on the constructed
-objects. Existing root calls and type names remain valid; internal paths and raw
-class-table access are not compatibility surfaces.
+| Event | `onPlayCompleted` |
+| --- | --- |
+| A clip that does not loop reaches the end its speed points to | called once, from `update` |
+| `stop`, a replacement by another `play`, `clear`, `deconstruct` | not called |
+| An end the engine reported, whose play the caller stopped or replaced before the next `update` | not called |
 
-This migration changes source ownership and exports only. Update ordering,
-request construction, backend reconciliation, marker behavior, and lifecycle
-semantics are unchanged. Controller decomposition and reusable evaluation output
-remain separate future work.
+A clip is also on its end when `setClipTime`, `setClipNormalizedTime` or a change of speed leaves it there:
+at the upper end with a positive speed, or at 0 with a negative one. The package then stops that
+track itself, with the layer's `fadeOut`.
 
-## Update transaction
+## Equal Roblox priorities
 
-`controller:update(sampleTime)` performs one transaction:
-
-1. Validate that `sampleTime` is finite and is not lower than the last accepted
-   coordinate. Equal coordinates are valid.
-2. Preview queued graph-intent commands to resolve the effective reader for
-   every layer after those commands take effect.
-3. Resolve controller-default, then layer, then active-play reader overrides.
-   Call each distinct selected function once with the same `sampleTime`.
-4. Validate every `TimeSample.position` and `TimeSample.rate` without mutation.
-5. Commit queued play/stop, parameter, layer-property, and reader commands;
-   retain the preflighted samples for evaluation.
-6. Evaluate motion nodes with absolute `MotionEvaluateContext.timePosition` and
-   `timeRate`. Transitions derive progress from their time-position anchor.
-7. Validate the complete `ClipRequest` batch and call
-   `backend:apply(sampleTime, requests)`.
-
-An invalid coordinate or reader result rejects before step 5. Queued commands
-remain pending. The backend is called on every successful update, including
-equal-coordinate and empty-request updates.
-
-The controller captures a lifecycle epoch before invoking borrowed code. A
-reader or graph-event callback that calls `clear` or `destroy` changes that
-epoch, aborting the old transaction before it can commit stale reader-preview
-commands or apply stale requests. Commands issued after `clear` use the new
-queue and remain available to the next update.
-
-## Literal time basis
-
-`TimeReader(sampleTime)` returns one atomic `{ position, rate }` sample.
-AnimGraph uses `position` directly for graph, transition, custom-motion, and
-sampled physical evaluation. It uses `rate` to compose optimized native
-playback and final terminal direction. It never derives rate from consecutive
-positions.
-
-The graph does not accumulate frame `dt`, maintain a source baseline, classify
-jumps, or make reader changes continuous. Pauses, reversals, seeks, and reader
-replacement therefore mean exactly what the selected reader returns. A caller
-that wants a continuous mapping supplies one; a caller that wants a native
-track physically re-addressed also issues `setTrackPosition` or
-`offsetTrackPosition`.
-
-State machines retain forward-only discrete-state semantics. An active
-transition stores a start-position anchor. If its supplied position moves
-backward, the transition shifts the anchor by the same amount so progress holds
-instead of rewinding or stalling. A forward jump remains literal. Replaying the
-same stateful runtime does not synthesize a phase-zero sample.
-
-## Command timing
-
-Graph intent takes effect on the next valid update. This includes play, stop,
-parameters/triggers, layer weight/speed/priority/backend data, and time-reader
-changes. Getters expose committed state.
-
-`setTrackPosition` and `offsetTrackPosition` are deliberately different: they
-are synchronous physical-generation commands whose boolean reports acceptance
-by the current active generation. `clear` and `destroy` are immediate lifecycle
-boundaries.
-
-## Graph and physical domains
-
-```text
-time-basis position != physical clip phase
-```
-
-Time-basis position drives transitions and graph events. Request speed and
-explicit position commands affect physical playback only. Negative physical
-speed never rewinds the state machine, and seeking a clip never replays graph
-history.
-
-`ClipRequest` therefore carries desired pre-clock physical speed plus the
-atomic `timePosition` and `timeRate`, but no graph delta. The backend receives
-the controller's shared sampling coordinate separately for apply ordering.
-
-## Backend position strategies
-
-`BackendPositionMode` is a fixed backend construction strategy and capability:
-
-- `nativeRate` starts Roblox tracks at `request.speed * request.timeRate` and
-  uses `AdjustSpeed` when that effective speed changes. It does not write
-  `TimePosition` every update or churn unchanged native properties.
-- `sampledPosition` starts tracks at native rate zero and derives physical
-  position as `physicalAnchor + request.speed * (request.timePosition -
-  timeAnchor)` on every apply. Speed and loop changes first evaluate/rebase
-  with the old values. Final terminal direction includes `request.timeRate`.
-
-Both strategies share the same manager for active/retiring/completed
-generations, priority mapping, weight/fade operations, synchronous positioning,
-completion dispatch, tombstones, and cleanup.
-
-Sampled generations preflight anchor-derived elapsed and offset arithmetic
-before the backend accepts a batch. This rejects finite inputs whose
-derived arithmetic overflows without partially sampling the batch. Apply depth
-is restored on every error path, keeping later completion dispatch live.
-
-When sampled playback has no positive Roblox `Length`, its physical write is
-deferred while anchor-relative phase continues to accrue. Once length resolves,
-the generation wraps or clamps the complete address and samples it. Explicit
-positioning rebases at the generation's last accepted request time position.
-
-## Lifecycle and completion
-
-The Roblox backend validates a request batch before materialization. It owns one
-active generation per `trackKey`, any retiring physical generations, and
-lightweight completed tombstones. Replacement or `forceRestart` can create a
-new generation while old physics fades.
-
-Native mode classifies natural Roblox completion signals. Sampled mode
-classifies non-looping completion from sampled physical phase and ignores
-native stop signals while an active zero-rate sampled generation remains
-owned. Sampled completion immediately cleans the otherwise-frozen physical
-track after committing its tombstone. Explicit stop, omission, replacement
-retirement, clear, and destroy do not emit natural completion.
-
-Completion is committed before `trackCompleted` dispatch. Listener snapshots
-permit safe re-entry. `Ended` owns cleanup of non-zero retirement fades; zero
-fade and inactive retirement clean immediately.
-
-The backend also epochs its lifecycle around the borrowed asset resolver. A
-resolver that calls `clear` or `destroy` invalidates the pending materialization
-before any track is loaded, so the external lifecycle boundary cannot be undone
-by the same apply.
-
-See the [absolute-time amendment](/todo/temporalAmendment) for the full
-contract, source inventory, edge cases, and migration record.
+Two layers may have the same `robloxPriority`. The package does nothing about it: Roblox blends
+their tracks in proportion to their weights, and the order of the layer definitions decides nothing.

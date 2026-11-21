@@ -1,0 +1,21 @@
+{
+  "extends": "roblox",
+  "tracker": { "kind": "youtrack", "project": "VMMO", "url": "https://voxelmmo.youtrack.cloud" },
+  "settings": {
+    "rojoProject": "dev.project.json",
+    "robloxInstall": "pesde install --locked",
+    "robloxPackagePaths": ["luau_packages"],
+    "luauPaths": ["src", "tests", "dev"],
+    "analyzePaths": ["src", "dev", "tests/**/*.typecheck.luau", "tests/**/*.typeError.luau"]
+  },
+  "checks": {
+    "tests": { "run": "scripts/verify/tests.ps1" },
+    "docs": { "run": "npm run docs:build" },
+    "studio": { "manual": "Open the dev place in Studio and run docs/guides/studio-verification.md" }
+  },
+  "kinds": {
+    "code": { "checks": ["tests", "studio"] },
+    "docs": { "checks": ["docs"], "integration": "pr" }
+  },
+  "pr": { "checks": ["tests"] }
+}

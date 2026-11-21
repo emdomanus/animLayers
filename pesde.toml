@@ -1,16 +1,19 @@
-name = "emdomanus/anim_graph"
+name = "emdomanus/anim_layers"
 version = "0.1.0"
-description = "Typed Roblox animation controller with authored layers, motion nodes, and backend abstraction."
+description = "Roblox animation clips on named layers of one Animator."
 license = "MIT"
 authors = ["emdomanus"]
-repository = "https://github.com/emdomanus/animGraph"
+repository = "https://github.com/emdomanus/animLayers"
 private = true
 includes = ["pesde.toml", "LICENSE", "README.md", "CHANGELOG.md", "src/**/*.luau"]
 
 [target]
 environment = "roblox"
-lib = "src/init.luau"
+lib = "src/shared.luau"
 build_files = ["src"]
 
 [indices]
 default = "https://github.com/pesde-pkg/index"
+
+[dependencies]
+luauUtils = { repo = "emdomanus/luauUtils", rev = "51f60518efde736b5497c0cbd2121c0ea4c517f7" }

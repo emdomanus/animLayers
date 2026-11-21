@@ -2,74 +2,61 @@
 
 ## Unreleased
 
-- Replaced `TimeSource` and scalar `LogicalPositionReader` with explicit
-  `controller:update(sampleTime)` and atomic `TimeReader(sampleTime) ->
-  { position, rate }`. Equal coordinates re-evaluate, backward controller
-  coordinates reject, and distinct readers are sampled once.
-- Replaced graph `dt`/`ClipRequest.deltaTime` accumulation with literal time-
-  position evaluation and transition start-position anchors. Removed address
-  revisions, source baselines, and package-owned discontinuity policy.
-- Added a next-update graph-intent transaction for play/stop, parameters,
-  layer properties, and timing-reader changes while retaining synchronous
-  active-generation absolute/relative positioning.
-- Added fixed backend `nativeRate` and `sampledPosition` strategies and
-  `backend:apply(sampleTime, requests)`. Native playback composes request speed
-  with reader rate; sampled playback uses reader-position anchors and zero-rate
-  Roblox tracks.
-- Added deterministic sampled-backend coverage and migrated the dev harness,
-  public API, diagrams, and VoxelMMO integration boundary to the new contract.
-- Added lifecycle-epoch guards so `clear` or `destroy` from a borrowed reader or
-  graph-event callback invalidates the in-flight controller update instead of
-  allowing stale commands or requests to restore cleared state.
-- Preserved active transition progress across replay and backward time-position
-  samples by shifting the transition start-position anchor.
-- Hardened sampled playback with preflight validation of derived phase
-  arithmetic, guaranteed apply-depth restoration after errors, and
-  lifecycle-safe asset resolution that cannot rematerialize after `clear` or
-  `destroy`.
-- Added backend-neutral `controller:offsetTrackPosition` and backend relative
-  positioning with finite signed seconds, active-generation boolean semantics,
-  known-length atomic read/modify/write, and generation-local unresolved offset
-  accumulation.
-- Added deterministic CP-AG-P coverage for absolute/relative command ordering,
-  loop/clamp behavior, desired-direction terminals, reverse-start ordering,
-  idempotence, property preservation, stale generations, and completion
-  re-entry/cleanup. Recorded authoritative operator acceptance of the complete
-  CP-AG-P Studio matrix.
-- Corrected non-looping terminal classification to use desired signed native
-  speed, including held/inward boundaries, natural reverse completion, safe
-  pending reverse starts, and seek-free live sign pivots on one generation.
-- Added the deterministic reverse boundary/start/pivot/loop/rematerialization
-  matrix and updated the backend/API/Studio contracts. Recorded authoritative
-  operator acceptance of the complete CP-AG-R Studio matrix.
-- Recorded operator-reviewed CP-TA3 closure: the 51-test deterministic/static
-  gate and all 12 Studio cases passed; VoxelMMO timing proofs and release
-  decisions remain deferred.
-- Added canonical `TrackCompletedEvent`, the discriminated `AnimationEvent`
-  union, `controller:setTrackPosition`, and backend live-position/completion
-  ports; removed the unused `motionRequested` event name.
-- Added Roblox generation tokens, same-key clip replacement, force-restart
-  rematerialization, completed tombstones, stale-signal guards, and snapshot-safe
-  re-entrant completion dispatch.
-- Added explicit fade-retirement ownership: `Stopped` classifies only natural
-  active completion, `Ended` owns non-zero-fade physical cleanup, and zero-fade,
-  clear, and destroy boundaries clean immediately without false completion.
-- Extended deterministic lifecycle coverage and the Studio dev harness for live
-  addressing, terminal/natural completion, looping, replacement, reappearance
-  during fade, listener mutation, and physical cleanup visibility.
-- Removed the controller-owned frame-binding helper; callers own update
-  scheduling.
-- Consolidated canonical public timing and positioning definitions under
-  `types/def` and moved implementation helpers under `utils`.
-- Replaced the two legacy numeric position fields with the canonical, validated
-  `AnimationPosition` union and one-shot `initialPosition`.
-- Made Roblox backend apply idempotent for unchanged live generations, added
-  pending-length resolution and exact looping/non-looping boundaries, and
-  retained an internal completed-materialization latch that prevents replay.
-- Added duplicate request-key rejection before backend mutation and executable
-  Lune coverage for the CP-TA1 timing and initial-position contract.
-- Reorganized documentation into architecture, guides, filesystem-aligned API,
-  shared types, consumer research, and engineering TODO sections.
+The package was rewritten (VMMO-90). Every 0.1 name is removed with no alias;
+`docs/guides/migrating.md` maps each old call to its replacement. This entry replaces the unreleased
+absolute-time work (`TimeReader`, the command queue, `sampledPosition`), which is removed with the
+rest and remains in the repository's history.
+
+### Added
+
+- `controllers.layerController.new(animator, layerDefinitions)`: named layers over one `Animator`,
+  each playing one clip or nothing. Commands (`play`, `stop`, `setClipSpeed`, `setClipTime`,
+  `setClipNormalizedTime`, `setLayerWeight`, `setLayerTimeScale`) write the controller's state;
+  `update()` is the only place the engine is called, makes one engine call per difference, and
+  returns at its first statement when nothing changed.
+- Speed and position belong to the clip playing on a layer. Weight and time scale belong to the
+  layer, stay across plays and start at 1. The engine's speed is the clip's speed times the layer's
+  time scale.
+- `utils.clipDefinition.build(assetId, looped)`: a frozen definition, `{ assetId, looped }`. It
+  carries, under a field the public type does not declare, the one `Animation` Instance every
+  controller loads that clip's tracks from.
+- `trackManager`, a private object the controller constructs: it owns the engine's tracks and makes
+  every engine call. The entry exports nothing of it.
+- `play` returns the play's id, a number. `onPlayCompleted(callback)` reports a natural end from
+  `update`; `onMarker(markerName, callback)` is called inside the engine's marker signal.
+- A speed tolerance: `setClipSpeed` replaces a clip's speed only beyond 0.005 and 1%, or to or from
+  0, or across a change of sign, and returns the speed in effect.
+- Kept tracks: a controller plays a loaded `AnimationTrack` again while it is idle, and destroys
+  tracks only at `deconstruct` or above 64, where it drops the idle track played longest ago.
+- `update` raises when an engine call raises, and the next `update` makes the calls that had not
+  returned.
+- A Lune case that shows `update` allocates nothing, quiet or with a speed changing on every call.
+- `compass.json`, `AGENTS.md`, `seleneLuau.yml`, and the dependency `emdomanus/luau_utils` for
+  `callbackList`.
+
+### Changed
+
+- The package is renamed from `animGraph` (pesde `emdomanus/anim_graph`) to `animLayers` (pesde
+  `emdomanus/anim_layers`): it has layers and no graph. The entry's module type is
+  `AnimLayersModule`, and the dev place maps the package at `ReplicatedStorage.packages.animLayers`.
+- The entry is `src/shared.luau`, typed and frozen, with its exports under `controllers` and
+  `utils`. Requires are by string; type files are `public.luau` and `private.luau` leaves.
+- Tests moved to `tests/src/...` beside what they test and are found by suffix by
+  `scripts/verify/tests.ps1`. They require the real modules through `@game`.
+- The dev place calls the new API and shows the engine's playing tracks.
+
+### Removed
+
+- `AnimationController`, `robloxAnimatorBackend` as a public object, and the backend contract.
+- Motion nodes (`clipNode`, `blend1DNode`, `blend2DNode`), `stateMachineRuntime`, transitions,
+  triggers, the parameter store and the graph events.
+- `TimeReader`, `TimeSample`, the three reader levels and the `sampleTime` argument of `update`.
+- The command queue, `trackKey`, `LayerPlayOptions`, `AnimationPosition`, `offsetTrackPosition`,
+  `logicalPriority` and priority bands, the debug snapshots, and all five type parameters.
+- The `sampledPosition` backend mode.
+- `stackModifier`, the package's only use of `task.delay`.
+- The bench suite and its script, the old verification scripts, the docs diagrams and their
+  renderer.
 
 ## 0.1.0
 

@@ -1,113 +1,66 @@
-# Getting Started
+# Getting started
 
-Construct a backend, provide a default time reader, declare layers, and
-pass an explicit coordinate from caller-owned scheduling.
+## 1. Build clip definitions once
+
+A definition is an asset id, a loop flag and the one `Animation` Instance its tracks are loaded
+from. Build each when your code loads and keep it; every controller plays the same definitions.
 
 ```luau
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
+local AnimLayers = require("@game/ReplicatedStorage/packages/animLayers")
 
-local AnimGraph = require(ReplicatedStorage.packages.animGraph)
+local WALK = AnimLayers.utils.clipDefinition.build(180426354, true)
+local WAVE = AnimLayers.utils.clipDefinition.build(128777973, false)
+```
 
-type Layer = "base" | "action"
-type State = "locomotion" | "empty" | "attack"
-type Param = "speed" | "attack"
-type Clip = "idle" | "walk" | "slash"
-type LayerBackend = AnimGraph.RobloxLayerBackend
+## 2. Construct a controller
 
-local backend = AnimGraph.robloxAnimatorBackend.new({
-	animator = animator,
-	positionMode = "nativeRate",
-	resolveAssetId = function(clip: Clip): number
-		return animationIds[clip]
-	end,
+One controller per `Animator`. The layer list is fixed for the controller's life.
+
+```luau
+local controller = AnimLayers.controllers.layerController.new(animator, {
+	{ name = "base", robloxPriority = Enum.AnimationPriority.Movement, fadeIn = 0.2, fadeOut = 0.2 },
+	{ name = "action", robloxPriority = Enum.AnimationPriority.Action },
 })
+```
 
-local worldReader: AnimGraph.TimeReader = function(sampleTime: number): AnimGraph.TimeSample
-	return {
-		position = sampleTime,
-		rate = 1,
-	}
-end
+## 3. Call update once per frame
 
-type Controller = AnimGraph.AnimationController<Layer, State, Param, Clip, LayerBackend>
-type Config = AnimGraph.AnimationControllerConfig<Layer, State, Param, Clip, LayerBackend>
-local config: Config = {
-	backend = backend,
-	timeReader = worldReader,
-	parameterDefaults = { speed = 0 },
-	layers = {
-		{ id = "base", logicalPriority = 0 },
-		{ id = "action", logicalPriority = 100 },
-	},
-}
-local controller: Controller = AnimGraph.new(config)
+The package schedules nothing. Call `update` from the step that owns your frame order; it returns
+at its first statement when no command was made since the last call.
 
-controller:play("base", AnimGraph.blend1D("speed", {
-	samples = {
-		{ threshold = 0, motion = AnimGraph.clip("idle") },
-		{ threshold = 8, motion = AnimGraph.clip("walk") },
-	},
-}), {
-	state = "locomotion",
-	looped = true,
-})
-controller:setFloat("speed", 4)
-
-local updateConnection = RunService.PreAnimation:Connect(function()
-	controller:update(os.clock())
+```luau
+RunService.PreAnimation:Connect(function()
+	controller:update()
 end)
-
--- later
-updateConnection:Disconnect()
-controller:destroy()
 ```
 
-`play` and the parameter write above are queued until the first `update`.
-Calling `update` again with the same coordinate can apply new commands without
-advancing transition progress.
-
-## Reader scopes
-
-A layer or active play can override the controller reader:
+## 4. Command it
 
 ```luau
-controller:play("action", AnimGraph.clip("slash"), {
-	state = "attack",
-	timeReader = actionReader,
-})
+local walkPlay = controller:play("base", WALK)             -- returns the play's id
+local speedInEffect = controller:setClipSpeed("base", 1.3)     -- every frame is fine
+controller:play("action", WAVE, 1, 0.1)                    -- speed, fade
+controller:setLayerWeight("action", 0.5, 0.3)             -- the layer's weight: this clip and the next ones
+controller:setLayerTimeScale("action", 0)                  -- pause whatever "action" plays
+controller:stop("base", 0.5)
 ```
 
-The active-play reader replaces the layer reader; the layer reader replaces the
-controller default. Runtime changes are also available through
-`setDefaultTimeReader`, `setLayerTimeReader`, and `setActivePlayTimeReader`.
-Reader changes take effect on the next valid update, and the replacement's
-position is observed literally.
-
-Return position and rate together so both fields describe one clock sample.
-AnimGraph does not infer rate from position changes or hide jumps. If a reader
-replacement must remain continuous, map it before returning the sample. If a
-native track must move physically, issue `setTrackPosition` or
-`offsetTrackPosition` after its generation exists.
-
-## Backend mode
-
-Choose `nativeRate` when Roblox should advance tracks through native signed
-speed. Choose `sampledPosition` when the backend should derive and write
-physical position from each reader position. This is one fixed backend
-strategy, not a layer or content option; graph semantics are identical in both
-modes. Calling `update` every frame does not make `nativeRate` write
-`TimePosition` every frame.
-
-## Initial and live position
-
-Use the discriminated `initialPosition` union for one-shot materialization:
+## 5. Hear about ends and markers
 
 ```luau
-controller:play("action", AnimGraph.clip("slash"), {
-	initialPosition = { kind = "normalized", value = 0.5 },
-})
+local unsubscribe = controller:onPlayCompleted(function(layer, playId)
+	-- called from update; the layer is already empty
+end)
+controller:onMarker("Footstep", function(layer, playId, clip, value)
+	-- called inside the engine's marker signal
+end)
 ```
 
-Use synchronous `setTrackPosition` or `offsetTrackPosition` after a generation
-exists. Those physical commands do not change state-machine progress.
+`onPlayCompleted` reports only an end the engine reached by itself. Your own `stop`, `play` and
+`clear` report nothing: you made them happen and you hold the play's id.
+
+## 6. Tear down
+
+```luau
+controller:deconstruct()    -- destroys the controller's tracks; the definitions stay
+```

@@ -1,1 +1,2 @@
-std = "roblox"
+# For a global both define, the first std listed wins, so seleneLuau's corrections come first.
+std = "seleneLuau+roblox"

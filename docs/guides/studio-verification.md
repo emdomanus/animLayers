@@ -1,246 +1,62 @@
-# Studio Verification
+# Studio verification
 
-Local Lune tests and static tools cannot establish Roblox engine behavior. The
-stable checklist below is for a Rojo-connected disposable Studio place with
-owned test animations. Record the place/build context and return Studio to Edit
-mode after the run.
+The Lune tests run the controller over a fake `Animator`. Everything below depends on what the
+engine really does and has not been run since the package was rewritten. Use
+[the dev place](./dev-place.md); record the Studio version with the result.
+
+The checklist that the 0.1 package passed (CP-AG-R, CP-AG-P, CP-TA3) was run on a design that
+loaded a new track for every play. It does not carry over.
 
 ## Checklist
 
-1. Load the test animations and confirm initial `Length = 0` positioning
-   resolves. A pending reverse start must `Play` at speed `0`, remain at the
-   default lower position without completion, write the requested upper position
-   once after positive length, and only then adopt the retained negative speed.
-2. Confirm the non-looping signed boundary table: upper/positive and
-   lower/negative complete; upper/negative and lower/positive move inward;
-   either boundary at zero holds active. Confirm looping positions use modulo,
-   normalized `1` canonicalizes to `0`, and addressing does not complete.
-3. Record signal order for natural forward upper-end completion, natural reverse
-   lower-end completion, `Stop(0)`, and `Stop(1)`.
-4. Confirm completed tombstones remain stopped and physically absent.
-5. Reapply unchanged state and confirm the generation, signals, speed, weight,
-   priority, loop, and fade state do not churn.
-6. Confirm forward and reverse looped playback wrap, reverse emits native
-   `DidLoop`, and neither direction produces completion.
-7. Replace a same-key clip and reappear during a fade; confirm stale callbacks
-   are suppressed and old generations clean up.
-8. Re-enter from a completion callback through play/stop/position/clear/destroy
-   and confirm one completion, no recursion/errors, and no leaked generations.
-9. Hold the action time basis (`position` fixed, `rate = 0`) while base advances;
-   confirm action native speed becomes zero, base remains at its composed speed,
-   and the native fade still progresses.
-10. Compose blend and transition weights without restarting generations.
-11. Pivot live native speed across positive, zero, and negative in the interior
-    and at exact boundaries. Confirm one unchanged track/generation, only changed
-    `AdjustSpeed` calls, no seek or replay, and completion only on an outward
-    boundary pivot. This does not claim continuous reverse graph traversal.
-12. Seek across a named marker and then play continuously across it; record the
-    absence/presence of marker events for deferred marker design.
+1. **A replayed track starts over.** "play walk", "stop base", wait for the fade, "play walk": the
+   status box shows the same content id starting at `t=0` with its weight rising from 0.
+2. **A second track while the first fades.** "play walk again (restarts)": the status box shows two
+   tracks of the walk for the length of the fade, then one.
+3. **A natural end is reported once.** "play wave": one `completed` line when the wave ends, and
+   none for "stop action", for "wave, then cheer in the same frame", or for "clear".
+4. **No false end after a clear.** "play wave", "clear", "play wave" at once: the second wave plays
+   through and logs one `completed`, at its own end. This is the case of a `Stopped` or `Ended`
+   signal arriving after the track was played again.
+5. **Positions.** "wave from 50%" starts mid-clip. "jump placed on its end (completes)" logs
+   `completed` in the same frame and the track fades out. "base to 0.2 s" moves the walk.
+6. **Backwards.** "wave backwards from its end" on a fresh place, so the track's length has not
+   loaded: the wave plays backwards from its end and logs `completed` at its start.
+7. **Speed.** "speed 2", "speed 0 (pause)", "speed -1 (reverse)" change the status box's speed.
+   "speed +0.5% (inside the tolerance)" changes nothing and logs the old speed as the one in effect.
+8. **Time scale and weight.** "base time scale 0" freezes the walk and "base time scale 1" resumes
+   it from where it was. "base weight 0.3 over 1 s" shows the weight moving for one second. With
+9. **Equal priority.** "play wave", then "overlay: cheer at weight 1": the two share the arms
+   instead of the later one overriding.
+10. **Tracks are kept.** "cycle every clip on action (loads tracks)", twice: the engine's
+    `AnimationPlayed` lines appear both times, and nothing warns about a track limit.
+11. **Deconstruct.** "deconstruct and build again", then "play walk": it plays; nothing from the
+    old controller is logged.
+12. **Markers.** With a clip that has a `Footstep` marker in `CLIPS`: one `marker` line per marker
+    while the clip is a layer's play, and none while it fades out.
+13. **A raise.** Parent the dummy out of `Workspace` before the first play and press "play walk":
+    the error appears every frame from `update`; parent it back and the walk starts.
 
-## Absolute-time and sampled-position gate
+14. **More tracks than the cap on one `Animator`.** The controller keeps 64 tracks. Each of the two
+    buttons plays 70 separate definitions of the walk on `action`, so 70 tracks are loaded on the
+    dummy's `Animator`. Report what the engine does for each: every line the Output window prints,
+    the track count in the status box's first line while it runs and after it settles, and whether
+    "play wave" and "play walk" still play afterwards.
+    - "70 definitions on action, one per 0.5 s": each earlier track has faded out and is idle
+      before the next loads, so from the 65th on the controller destroys the idle track played
+      longest ago. Expected from the package: never more than two tracks in the status box. Not
+      known: whether the engine reports or keeps anything for the six destroyed tracks.
+    - "70 definitions on action, in one frame": every earlier track is still fading out, and the
+      controller destroys no track that is playing or fading out, so 70 tracks play or fade at once.
+      That is more than the 64 that Roblox staff gave as the engine's limit of tracks playing on one
+      `Animator`. Not known: whether the engine warns, refuses the later `Play` calls, or drops
+      tracks, and whether the controller's tracks are usable afterwards.
 
-This new gate is not yet operator-accepted. Run the harness once with
-`BACKEND_POSITION_MODE = "nativeRate"` and once with
-`"sampledPosition"`, using the same owned clips and rig.
+## Still to measure
 
-1. Confirm both strategies receive one controller coordinate per
-   `PreAnimation` update and graph transitions progress identically when their
-   `TimeSample` values match.
-2. Hold one reader at fixed position and zero rate while another advances.
-   Confirm only the advancing layer's transition progresses and native physical
-   speed on the held layer becomes zero.
-3. Queue a parameter or weight change and evaluate twice at the same coordinate.
-   Confirm the second evaluation observes the command while transition progress
-   remains unchanged.
-4. In `nativeRate`, confirm final speed is request speed multiplied by reader
-   rate, unchanged effective-speed updates do not write `TimePosition` or churn
-   properties, and changes continue through `Play`/`AdjustSpeed`.
-5. In `sampledPosition`, confirm `Play` uses speed zero, `AdjustSpeed` is not
-   used for phase, and each successful update writes the position derived from
-   the reader's literal `position` and the sampled physical anchor.
-6. Pivot sampled speed positive to negative at one coordinate. Confirm position
-   is continuous at the pivot, then moves backward from the rebased anchor.
-7. Confirm sampled looping wraps, non-looping outward boundaries complete once,
-   and inward/zero boundary cases remain active.
-8. Start sampled playback while `Length == 0`, change speed before resolution,
-   then allow length to resolve. Confirm elapsed phase was retained and exactly
-   one resolved address is applied without generation replacement.
-9. Issue synchronous absolute and relative position commands between updates.
-   Confirm each applies to the active generation immediately, an equal-
-   coordinate update holds it, and later coordinates advance from the new
-   physical anchor.
-10. Jump a reader's position without changing its rate. Confirm sampled mode
-    follows the literal jump, while native mode does not infer a physical seek;
-    then issue an explicit position command and confirm the native generation
-    moves without replacement.
-11. Stop/restart a sampled native track externally or through lifecycle
-    controls. Confirm native stop does not falsely complete an active sampled
-    generation, while explicit retirement still fades and cleans once.
-12. Record Roblox weight/fade behavior in sampled mode. Position determinism
-    must not be reported as deterministic fade timing.
-13. Record marker, keyframe-event, root-motion, and pose behavior under sampled
-    `TimePosition` writes. Any difference from native playback is a consumer
-    integration constraint, not evidence to silently emulate native signals.
-
-## CP-AG-P operator acceptance
-
-On 2026-08-16, the operator manually completed the documented CP-AG-P Studio
-verification and reported that every case passed. That report is authoritative
-for this checkpoint. The closure handoff did not include place/build,
-client/server role, rig, animation-asset, log, or video metadata, so this record
-does not invent those details. The deterministic 72-test suite remains separate
-package proof rather than a substitute for this engine evidence.
-
-The accepted relative-position matrix was:
-
-1. On a known-length active generation, use **Offset +0.50s** and **Offset
-   -0.50s**. Confirm exact signed movement from the current physical position,
-   unchanged generation/playing state, and no `Play`, load, speed, weight,
-   priority, loop, or fade churn.
-2. Use **Offset Loop Wrap** in forward and reverse playback. Confirm positive
-   and negative modulo wrapping, one write per accepted command, native
-   `DidLoop` as applicable, and no forwarded `trackCompleted`.
-3. Use **Offset Fwd End** and **Offset Rev End**. Confirm clamping to the upper
-   and lower boundary respectively and one completion only after the backend
-   lifecycle is committed. Repeat/stale signals must not duplicate completion.
-4. Use **Offset Zero Hold**, then exercise the corresponding inward-speed upper
-   and lower cases. Confirm boundary placement remains active; terminal outcome
-   follows final desired speed rather than offset sign.
-5. Run **Cold Offset Queue first in a fresh Play session**. Confirm `Length`
-   begins at zero, both offsets are accepted without a write/completion, the
-   pending normalized base plus ordered sum resolves to exactly one final write,
-   and repeated updates do not reapply it. Separately verify a queued offset
-   without an absolute base uses the physical position observed at resolution.
-6. While length remains unresolved, issue offset then absolute then offset.
-   Confirm the absolute command discards the older offset and the later offset
-   composes from the new base. Repeat absolute then multiple offsets and confirm
-   one combined write.
-7. Run **Cold Rev + Offset first in a fresh Play session**. Confirm `Play`/native
-   speed remains zero while unresolved, then observe exactly one combined
-   position write before exactly one retained negative-speed application, with
-   no replay or generation change.
-8. Queue/issue an offset around **Replace Same Key** and **Reappear In Fade**.
-   Confirm old pending state and stale `Stopped`/`Ended` callbacks cannot mutate
-   the replacement, and both generations clean according to their owners.
-9. Re-enter from relative outward completion through replacement, relative
-   positioning, stop/clear/destroy, and record one completion with no leak or
-   wedged dispatch. Use **Dump Native + Debug** before and after to establish the
-   absence of replay/property churn.
-
-This gate adds no continuous reverse graph traversal, marker forwarding,
-position getter, raw-track API, VoxelMMO/hitstop behavior, publication, or
-dependency-pin work.
-
-## CP-AG-R operator acceptance
-
-On 2026-08-15, the operator manually completed the documented CP-AG-R Studio
-verification and reported that every case passed. That report is authoritative
-for this checkpoint. The closure handoff did not include place/build,
-client/server role, rig, animation-asset, log, or video metadata, so this record
-does not invent those details.
-
-The operator verified:
-
-1. the complete initial and live signed non-looping boundary matrix: upper with
-   positive speed and lower with negative speed completed, inward directions
-   remained active and moved inward, and zero held either boundary active;
-2. known-length reverse startup remained active when negative `Play` preceded
-   the exact upper `TimePosition` write, with no transient-lower completion and
-   one unchanged generation;
-3. unknown-length reverse startup used `Play` speed `0`, remained held without
-   premature completion, wrote the requested upper position once after positive
-   length, then applied the retained negative speed without replay, rewrite,
-   reapplication, or generation replacement;
-4. the unresolved `0 -> negative` transition remained held until length
-   resolved, then observed one position resolution followed by one negative
-   speed application;
-5. live positive/zero/negative pivots in the interior used native speed
-   adjustment without seek, `Play`, replacement, or generation change;
-6. exact-boundary pivots completed exactly once only when the new direction
-   pointed outward;
-7. natural reverse playback completed at the lower boundary exactly once after
-   committed state, then cleaned physical ownership without stale signals
-   affecting a later same-key generation; and
-8. reverse looping wrapped and emitted native `DidLoop` without forwarding
-   `trackCompleted`, while live loop positioning remained non-completing.
-
-The deterministic 59-test suite remains separate package proof; the operator
-run closes the engine-dependent CP-AG-R gate.
-
-## CP-TA3 operator record
-
-The operator connected to **Place1** and personally completed all 12 cases.
-These observations are authoritative for the checkpoint:
-
-1. Initial `Length=0` positioning resolved after loading; seconds, normalized,
-   forward, and backward seeks were exact.
-2. At the then-tested positive speed, non-looping upper positions clamped and
-   completed; looping positions used modulo and normalized `1` became `0`.
-3. Signal order was `Stopped`, then `Ended` at zero weight for natural
-   completion; `Stop(0)` produced both immediately; `Stop(1)` produced
-   `Stopped` immediately and `Ended` after the fade reached zero.
-4. Completed tombstones remained stopped and physically absent.
-5. Unchanged apply retained its generation, did not restart, emitted no
-   stop/end signals, and caused no speed/weight/priority/loop churn.
-6. Looped playback produced no completion.
-7. Same-key replacement and fade reappearance suppressed stale callbacks and
-   cleaned old generations.
-8. Completion callback re-entry completed A and B exactly once with no
-   recursion, errors, playing tracks, or leaked generations.
-9. Base logical timing advanced while action timing was held. Action native
-   speed changed to `0.5`, base remained `1.0`, and the native fade completed
-   while action logical delta was zero.
-10. Blend/transition weights composed correctly without restarting generations.
-11. Negative `AdjustSpeed` moved backward and wrapped at zero, emitting
-    `DidLoop`. This does not claim continuous reverse graph traversal.
-12. Direct forward/backward seeks across a named marker emitted no marker
-    event; continuous playback crossing it emitted one. This remains deferred
-    marker-design evidence.
-
-## CP-TA3 closure
-
-- Deterministic/static suite: **51/51 tests passed**.
-- Formatting, lint, Luau analysis, both sourcemaps, documentation build, and
-  diff checks passed.
-- The migration brief remained accurate.
-- Studio was returned to **Edit** mode.
-- **CP-TA3 is operator-reviewed and complete.**
-- VMMO timing-composition proofs remain a separate consumer follow-on.
-- Package publication and version decisions remain deferred.
-
-This historical CP-TA3 record remains separate from the completed CP-AG-R
-operator record above.
-
-This page records engine evidence; it does not turn deferred marker forwarding,
-continuous reverse graph traversal, package publication, or VoxelMMO consumer
-work into AnimGraph implementation scope.
-
-## Native marker subscriptions — VMMO-43 (pending)
-
-Lune coverage exercises controller/backend/playback wiring against fake engine
-signals. It does not prove real engine marker timing.
-
-1. Use an accessible animation with named `Footstep` markers and string payloads.
-   Register `onTrackMarker(trackKey, "Footstep", callback)` before and after play.
-   Verify the callback receives exactly one string argument, including empty values.
-2. Register `onMarker("Footstep", callback)` before play and with tracks already
-   active. Verify it receives `(track, value)` for existing and future tracks,
-   and inspect the source's key, generation, layer, state, and clip getters.
-3. Play continuously through multiple loops. Check repeated events pass the same
-   source object. Play the same asset on two layers with distinct keys; their
-   sources must differ. Register specific and global observers together and
-   verify releasing either leaves the other functional.
-4. Restart/replace, stop with a fade, complete, clear, and destroy. Check old
-   generations never deliver afterward, replacement sources are distinct, clear
-   retains subscriptions, and release stays safe after destruction. Include a
-   marker at the final frame to record engine ordering relative to completion.
-5. Seek forward/backward across markers: no synthetic event should be emitted.
-   Resume playback and verify subsequent native crossings notify.
-6. From callbacks, unsubscribe, add observers, clear/destroy, or restart the
-   controller. Verify no stale remaining delivery or leaked connections, and
-   graph play/stop commands still follow next-update semantics.
-7. Sampled mode must report false and reject both subscription APIs, while
-   ordinary sampled playback continues to work.
-
-Status: not executed in Studio for this checkpoint. Earlier seek experiments are
-supporting design evidence, not acceptance of the new subscription API.
+- Allocation per frame with the VMMO-45 method, on one body controller and on a body with one
+  component controller.
+- What a loaded, idle `AnimationTrack` costs, which decides whether 64 kept tracks per controller is
+  the right cap.
+- Whether `Ended` fires for a track whose `Animator` has left the DataModel. Until it does, such a
+  track stays `fading` and is not played again; `clear` makes every track idle.

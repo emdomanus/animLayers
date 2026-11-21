@@ -1,0 +1,7 @@
+# Luau APIs wrong in the pinned Selene Roblox standard library.
+# Format: https://kampfkarren.github.io/selene/usage/std.html
+globals:
+  # Luau's require takes a string path; the pinned Roblox std accepts only an Instance or an id.
+  require:
+    args:
+      - type: any

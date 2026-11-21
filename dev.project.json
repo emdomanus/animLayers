@@ -1,13 +1,16 @@
 {
-  "name": "animGraph-dev",
+  "name": "animLayers-dev",
   "tree": {
     "$className": "DataModel",
     "ReplicatedStorage": {
       "$className": "ReplicatedStorage",
       "packages": {
         "$className": "Folder",
-        "animGraph": {
+        "animLayers": {
           "$path": "src"
+        },
+        "luau_packages": {
+          "$path": "luau_packages"
         }
       }
     },
@@ -15,7 +18,7 @@
       "$className": "StarterPlayer",
       "StarterPlayerScripts": {
         "$className": "StarterPlayerScripts",
-        "animGraphDev": {
+        "animLayersDev": {
           "$path": "dev/client"
         }
       }

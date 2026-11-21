@@ -3,6 +3,8 @@ node_modules/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
 .verification/
-.animgraph-tests/
-dev-sourcemap.json
-scripts/luau-lsp/globalTypes.d.luau
+.pesde/
+roblox_packages/
+luau_packages/
+lune_packages/
+sourcemap.json

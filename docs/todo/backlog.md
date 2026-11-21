@@ -1,50 +1,27 @@
 # Backlog
 
-These items are outside the implemented absolute-time library contract.
+Open after the VMMO-90 rewrite.
 
-## Near Term
+## Needs Studio
 
-- Studio acceptance of real `sampledPosition` pose, fade, completion, marker,
-  and cleanup behavior.
-- VoxelMMO timing-composition and target-rematerialization proofs.
-- Exit-time transition conditions and transition interruption policy.
-- Focused blend-weight and transition-condition coverage.
+- The whole [Studio checklist](/guides/studio-verification). Nothing in it has been run on the new
+  controller.
+- Allocation per frame in Roblox's VM, with the VMMO-45 method.
+- The memory cost of a loaded, idle `AnimationTrack`, which decides whether 64 kept tracks per
+  controller is the right cap.
+- Whether `Ended` fires for a track whose `Animator` has left the DataModel.
 
-## Consumer Driven
+## Not built
 
-- VoxelMMO adapter and timing-binding composition in the consumer repository.
-- Sampled-position marker metadata and crossing evaluation, including loop,
-  reverse, and explicit-seek semantics. Native marker subscriptions are implemented;
-  real Studio acceptance remains pending (VMMO-43).
-- Consumer marker arbitration for blended footsteps, coordinated with VMMO-26.
-- Optional layer stack behavior only after repeated consumer use proves a
-  package-generic contract.
+- A blend along one number, and one along two. `docs/todo/vmmo90/apiAssessment.md` section 4.3
+  records the definitions, the weights, and that clips of different lengths stay in phase only if
+  each track's speed is scaled by its length. When that page is deleted, move the record here.
+- A way to play one of Roblox's own animation graphs as a clip and forward a parameter to
+  `AnimationTrack:SetParameter`. Nothing asks for it yet.
 
-## Remaining Convention Work
+## Consumer
 
-The VMMO-26 package-layout checkpoint establishes owner-level shared domains,
-mirrored type ownership, and a single root export surface. It does not claim a
-complete migration of internal object contracts. Follow-up ownership work should
-address:
-
-- Controller-to-layer private field access and concrete `Impl` dependencies;
-  define the actual timing/owned capabilities before replacing these reaches.
-- Evaluation context parameter/event callbacks and their broad types; inject
-  existing objects through appropriate capabilities instead of manufacturing
-  forwarding closures.
-- Backend playback maps and helper signatures that still use `any` despite the
-  canonical playback surface.
-- StackModifier's cross-object `_applyEntries` call and owner-only lifecycle
-  naming; agree on the replacement contract before migrating callers.
-- Mutable backend capability policy and native annotations on runtime modules
-  without a measured or computational justification.
-
-Controller decomposition and reusable evaluation output/dirty-state tracking
-remain deferred until VoxelMMO integration and profiling. They are not part of
-the path migration, and the current `evaluate`/`apply` contracts are unchanged.
-
-## Custom Solver Research
-
-- Crunchyroll or custom pose-solver backend prototype.
-- Backend-neutral joint masks and capability reporting.
-- Per-joint fallback policy tests.
+- VoxelMMO keeps its pin of the 0.1 revision under a legacy name and adds this one as `animLayers`. How pesde links a
+  `luau` dependency (`luauUtils`) of a `roblox` package inside VoxelMMO's DataModel has not been
+  tried: the package requires it as `../../../luau_packages/luauUtils`, which resolves in the dev
+  place because `dev.project.json` maps `luau_packages` beside the package.

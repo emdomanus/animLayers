@@ -336,6 +336,38 @@ case("a natural end is recorded at the engine's report and its subscribers are c
 	expectList(completed, `action:{playId + 1}`)
 end)
 
+case("getPlayId is the id of the play on the layer now, and nil once the layer plays nothing", function()
+	local controller, animator = newController()
+	assert(controller:getPlayId("action") == nil, "a new layer plays nothing")
+	local first = controller:play("action", WAVE)
+	assert(controller:getPlayId("action") == first, "the id the first play returned")
+	local second = controller:play("action", CHEER)
+	assert(second ~= first and controller:getPlayId("action") == second, "the id the second play returned")
+	controller:stop("action")
+	assert(controller:getPlayId("action") == nil, "nil after stop")
+	controller:play("action", WAVE)
+	controller:clear()
+	assert(controller:getPlayId("action") == nil, "nil after clear")
+
+	local called = false
+	local playIdInCallback: number? = -1
+	controller:onPlayCompleted(function(layer)
+		called = true
+		playIdInCallback = controller:getPlayId(layer)
+	end)
+	local completing = controller:play("action", WAVE)
+	controller:update()
+	animator.tracks[1].endNaturally()
+	assert(controller:getPlayId("action") == completing, "the play stays on the layer until update reports it")
+	controller:update()
+	assert(called, "the play completed")
+	assert(playIdInCallback == nil, "nil inside the onPlayCompleted callback")
+
+	expectRaise(function()
+		controller:getPlayId("missing")
+	end, 'has no layer "missing"')
+end)
+
 case("a clip placed on the end its speed points to completes, and the package stops its track", function()
 	local controller, animator = newController(2)
 	local completed = recordCompletions(controller)

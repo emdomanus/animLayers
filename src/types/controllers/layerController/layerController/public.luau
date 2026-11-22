@@ -37,6 +37,11 @@ export type LayerController = {
 		fadeTime: number?
 	) -> number,
 	read stop: (self: LayerController, layer: string, fadeTime: number?) -> (),
+	-- The id of the play on the layer now: the number the last `play` on it returned, or nil when
+	-- the layer plays nothing. It is nil after `stop`, after `clear`, and from the moment a play
+	-- that does not loop completes, so inside the `onPlayCompleted` callback too. It calls no engine
+	-- and allocates nothing.
+	read getPlayId: (self: LayerController, layer: string) -> number?,
 
 	-- The next three address the clip playing on the layer and do nothing when it plays nothing.
 

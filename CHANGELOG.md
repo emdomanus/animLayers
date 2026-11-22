@@ -22,6 +22,8 @@ rest and remains in the repository's history.
   controller loads that clip's tracks from.
 - `trackManager`, a private object the controller constructs: it owns the engine's tracks and makes
   every engine call. The entry exports nothing of it.
+- `getPlayId(layer)` on `LayerController`: the id of the play on the layer now, or nil when the
+  layer plays nothing. It is nil after `stop` and `clear`, and already inside `onPlayCompleted`.
 - `play` returns the play's id, a number. `onPlayCompleted(callback)` reports a natural end from
   `update`; `onMarker(markerName, callback)` is called inside the engine's marker signal.
 - A speed tolerance: `setClipSpeed` replaces a clip's speed only beyond 0.005 and 1%, or to or from

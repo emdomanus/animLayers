@@ -51,6 +51,10 @@ a clip playing.
 | `setClipNormalizedTime(layer, alpha)` | The same, as a fraction of the clip's length from 0 to 1. |
 | `setLayerWeight(layer, weight, fadeTime?)` | Sets the layer's weight. With nothing playing it calls nothing, and the next `play` starts at it. While a clip plays it is one engine fade to the new weight, over `fadeTime` or the engine's own default. |
 | `setLayerTimeScale(layer, rate)` | Sets the layer's time scale; 0 pauses whatever the layer plays. |
+
+`getPlayId(layer): number?` returns the id of the play on the layer now, the number the last `play`
+returned, or nil when the layer plays nothing; it writes nothing, calls no engine and allocates nothing.
+
 ### The fade of an outgoing play
 
 A `play` on a layer that already has a play stops the outgoing track with the new play's fade. If

@@ -336,6 +336,10 @@ function LayerController.stop(self: LayerControllerImpl, layerName: string, fade
 	markChanged(self, layer)
 end
 
+function LayerController.getPlayId(self: LayerControllerImpl, layerName: string): number?
+	return requireLayer(self, layerName).playId
+end
+
 function LayerController.setClipSpeed(self: LayerControllerImpl, layerName: string, speed: number): number?
 	local layer = requireLayer(self, layerName)
 	if not isFinite(speed) then

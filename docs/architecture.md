@@ -75,7 +75,7 @@ return. None of them calls the engine.
    differs, `Play`, `AdjustWeight`, the `TimePosition` write, `AdjustSpeed`. Each "given to the
    track manager" field is written after its call returned.
 3. For each layer whose play was recorded as completed, empties the layer and calls the
-   `onPlayCompleted` subscribers.
+   `onPlayEnded` subscribers with `"completed"`.
 
 An engine call that raises makes `update` raise at that call. The commands are as the caller left
 them, the applied fields describe exactly the calls that returned, and `_changed` is still set, so
@@ -126,11 +126,15 @@ are called.
 
 ## What ends a play
 
-| Event | `onPlayCompleted` |
+Each play is reported to the `onPlayEnded` subscribers once, when its id leaves `layer.playId`,
+after the layer shows its new state.
+
+| Event | `onPlayEnded` |
 | --- | --- |
-| A clip that does not loop reaches the end its speed points to | called once, from `update` |
-| `stop`, a replacement by another `play`, `clear`, `deconstruct` | not called |
-| An end the engine reported, whose play the caller stopped or replaced before the next `update` | not called |
+| A clip that does not loop reaches the end its speed points to | `"completed"`, from `update` |
+| `stop`; `clear` and `deconstruct`, for each layer with a play, in layer order | `"stopped"`, inside the call |
+| A replacement by another `play` | `"replaced"`, inside `play` |
+| An end the engine reported, whose play the caller stopped or replaced before the next `update` | `"completed"`, inside the call that ended it |
 
 A clip is also on its end when `setClipTime`, `setClipNormalizedTime` or a change of speed leaves it there:
 at the upper end with a positive speed, or at 0 with a negative one. The package then stops that

@@ -28,8 +28,8 @@ has no idle track of `walk`, and `track:Play(fadeIn, 1, 1.2 * layer.timeScale)`.
 - Commands write the controller's state and return. `update` is the only place the engine is
   called, and it makes one engine call per difference between what was asked for and what the engine
   was last given. With nothing changed it returns at its first statement.
-- A natural end is recorded when the engine reports it, and the `onPlayCompleted` subscribers are
-  called from `update`.
+- Every play's end is reported once to the `onPlayEnded` subscribers, with its reason: a natural
+  end from `update`, a stop or a replacement inside the call that made it.
 - A marker subscriber is called inside the engine's marker signal.
 - Every `AnimationTrack` a controller loads is kept and played again, up to 64 per controller.
 - Nothing on a per-frame path creates a table, a closure or a string.

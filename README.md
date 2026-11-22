@@ -27,8 +27,8 @@ local controller = AnimLayers.controllers.layerController.new(animator, {
 	{ name = "action", robloxPriority = Enum.AnimationPriority.Action },
 })
 
-controller:onPlayCompleted(function(layer, playId)
-	print(layer, playId, "ended by itself")
+controller:onPlayEnded(function(layer, playId, reason)
+	print(layer, playId, reason)   -- "completed", "stopped" or "replaced"
 end)
 
 controller:play("base", WALK)
@@ -52,7 +52,7 @@ end)
 | `setLayerWeight(layer, weight, fadeTime?)` | the layer's weight, for this clip and the next; the engine fades to it |
 | `setClipTime(layer, seconds)`, `setClipNormalizedTime(layer, alpha)` | places the clip playing on the layer |
 | `setLayerTimeScale(layer, rate)` | multiplies the speed of whatever the layer plays |
-| `onPlayCompleted(callback)` | a natural end, reported from `update` |
+| `onPlayEnded(callback)` | every play's end, once, with its reason: completed, stopped or replaced |
 | `onMarker(markerName, callback)` | called inside the engine's marker signal |
 | `update()`, `clear()`, `deconstruct()` | the owner's methods |
 

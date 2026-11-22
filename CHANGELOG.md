@@ -23,9 +23,16 @@ rest and remains in the repository's history.
 - `trackManager`, a private object the controller constructs: it owns the engine's tracks and makes
   every engine call. The entry exports nothing of it.
 - `getPlayId(layer)` on `LayerController`: the id of the play on the layer now, or nil when the
-  layer plays nothing. It is nil after `stop` and `clear`, and already inside `onPlayCompleted`.
-- `play` returns the play's id, a number. `onPlayCompleted(callback)` reports a natural end from
-  `update`; `onMarker(markerName, callback)` is called inside the engine's marker signal.
+  layer plays nothing. It is nil after `stop` and `clear`, and already inside `onPlayEnded`.
+- `play` returns the play's id, a number. `onMarker(markerName, callback)` is called inside the
+  engine's marker signal.
+- `onPlayEnded(callback)` reports every play once, `(layer, playId, reason)`, where `reason` is a
+  `PlayEndedReason`: `"completed"` from `update` when a clip that does not loop reached its end,
+  `"stopped"` inside `stop`, and inside `clear` and `deconstruct` for each layer with a play, and
+  `"replaced"` inside the `play` that displaced it. A play the engine had already ended is
+  `"completed"` however it leaves its layer. The layer shows its new state inside the callback, and
+  a callback may call any method. `clear` and `deconstruct` report before they return.
+- `common.playEndedReason` on the entry: the three `PlayEndedReason` values, each under its name.
 - A speed tolerance: `setClipSpeed` replaces a clip's speed only beyond 0.005 and 1%, or to or from
   0, or across a change of sign, and returns the speed in effect.
 - Kept tracks: a controller plays a loaded `AnimationTrack` again while it is idle, and destroys
@@ -49,6 +56,8 @@ rest and remains in the repository's history.
 
 ### Removed
 
+- `onPlayCompleted`, with no alias. Revisions `9b014d4` to `6cc6f09` had it; code pinned at one of
+  them moves to `onPlayEnded`, whose `"completed"` reports are the ends `onPlayCompleted` reported.
 - `AnimationController`, `robloxAnimatorBackend` as a public object, and the backend contract.
 - Motion nodes (`clipNode`, `blend1DNode`, `blend2DNode`), `stateMachineRuntime`, transitions,
   triggers, the parameter store and the graph events.

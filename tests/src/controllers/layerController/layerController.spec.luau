@@ -49,13 +49,25 @@ local function loadLog(track: string, assetId: number, looped: boolean, priority
 		.. `{track}.Ended:Connect,{track}.Priority={priority}`
 end
 
--- Records every completion as "layer:playId".
+-- Records every completed play as "layer:playId".
 local function recordCompletions(controller: LayerControllerOwned): { string }
 	local completed: { string } = {}
-	controller:onPlayCompleted(function(layer, playId)
-		table.insert(completed, `{layer}:{playId}`)
+	controller:onPlayEnded(function(layer, playId, reason)
+		if reason == "completed" then
+			table.insert(completed, `{layer}:{playId}`)
+		end
 	end)
 	return completed
+end
+
+-- Records every report as "layer:playId:reason:current", where current is what `getPlayId`
+-- returns for the layer inside the callback.
+local function recordEnds(controller: LayerControllerOwned): { string }
+	local ended: { string } = {}
+	controller:onPlayEnded(function(layer, playId, reason)
+		table.insert(ended, `{layer}:{playId}:{reason}:{controller:getPlayId(layer)}`)
+	end)
+	return ended
 end
 
 local function expectList(actual: { string }, expected: string): ()
@@ -351,9 +363,11 @@ case("getPlayId is the id of the play on the layer now, and nil once the layer p
 
 	local called = false
 	local playIdInCallback: number? = -1
-	controller:onPlayCompleted(function(layer)
-		called = true
-		playIdInCallback = controller:getPlayId(layer)
+	controller:onPlayEnded(function(layer, _playId, reason)
+		if reason == "completed" then
+			called = true
+			playIdInCallback = controller:getPlayId(layer)
+		end
 	end)
 	local completing = controller:play("action", WAVE)
 	controller:update()
@@ -361,11 +375,98 @@ case("getPlayId is the id of the play on the layer now, and nil once the layer p
 	assert(controller:getPlayId("action") == completing, "the play stays on the layer until update reports it")
 	controller:update()
 	assert(called, "the play completed")
-	assert(playIdInCallback == nil, "nil inside the onPlayCompleted callback")
+	assert(playIdInCallback == nil, "nil inside the onPlayEnded callback")
 
 	expectRaise(function()
 		controller:getPlayId("missing")
 	end, 'has no layer "missing"')
+end)
+
+case("each reason is reported once, inside the call that ends the play, after the layer changed", function()
+	local controller, animator = newController()
+	local ended = recordEnds(controller)
+	local first = controller:play("base", WALK)
+	expectList(ended, "")
+	local second = controller:play("base", IDLE)
+	expectList(ended, `base:{first}:replaced:{second}`)
+	controller:stop("base")
+	expectList(ended, `base:{second}:stopped:nil`)
+	controller:stop("base")
+	controller:update()
+	expectList(ended, "")
+
+	local wave = controller:play("action", WAVE)
+	controller:update()
+	animator.tracks[1].endNaturally()
+	expectList(ended, "")
+	controller:update()
+	expectList(ended, `action:{wave}:completed:nil`)
+	controller:update()
+	expectList(ended, "")
+end)
+
+case("clear reports every layer with a play, in layer order, and no empty one", function()
+	local controller = newController()
+	local ended = recordEnds(controller)
+	local walk = controller:play("base", WALK)
+	controller:update()
+	-- Asked for and never given to the engine: still a play.
+	local cheer = controller:play("overlay", CHEER)
+	controller:clear()
+	expectList(ended, `base:{walk}:stopped:nil,overlay:{cheer}:stopped:nil`)
+	controller:clear()
+	expectList(ended, "")
+end)
+
+case("a callback that plays on the same layer: each play is reported once, and clear keeps its play", function()
+	local controller, animator = newController()
+	local ended = recordEnds(controller)
+	local replays = 0
+	local replayIds: { number } = {}
+	controller:onPlayEnded(function(layer)
+		if replays > 0 then
+			replays -= 1
+			table.insert(replayIds, controller:play(layer, IDLE))
+		end
+	end)
+	local first = controller:play("base", WALK)
+	replays = 2
+	-- The play this call starts is replaced inside its own report, and that play inside its report.
+	local second = controller:play("base", CHEER)
+	-- Ids count up per controller; the inner play returns first, so take them by number.
+	local third, fourth = second + 1, second + 2
+	assert(#replayIds == 2, "the callback played twice")
+	expectList(ended, `base:{first}:replaced:{second},base:{second}:replaced:{third},base:{third}:replaced:{fourth}`)
+	assert(controller:getPlayId("base") == fourth, "the last play is on the layer")
+
+	replays = 1
+	controller:clear()
+	local fifth = replayIds[3]
+	expectList(ended, `base:{fourth}:stopped:nil`)
+	assert(controller:getPlayId("base") == fifth, "the play a callback started during clear is kept")
+	animator.takeLog()
+	controller:update()
+	expectLog(animator, loadLog("t1", 102, true, "Movement") .. ",t1.Play(0.2,1,1)")
+end)
+
+case("a callback that deconstructs: every play is reported once, then the subscribers are dropped", function()
+	local controller, animator = newController()
+	local ended = recordEnds(controller)
+	controller:onPlayEnded(function()
+		controller:deconstruct()
+	end)
+	local walk = controller:play("base", WALK)
+	local wave = controller:play("action", WAVE)
+	controller:update()
+	controller:stop("base")
+	expectList(ended, `base:{walk}:stopped:nil,action:{wave}:stopped:nil`)
+	assert(animator.tracks[1].destroyed and animator.tracks[2].destroyed, "every track was destroyed")
+	controller:update()
+	controller:clear()
+	expectList(ended, "")
+	expectRaise(function()
+		controller:play("base", WALK)
+	end, "LayerController is deconstructed")
 end)
 
 case("a clip placed on the end its speed points to completes, and the package stops its track", function()
@@ -391,45 +492,51 @@ case("a clip placed on the end its speed points to completes, and the package st
 	expectList(completed, `action:{second}`)
 end)
 
-case("stop, a replacement, clear and deconstruct complete nothing", function()
-	local controller, animator = newController()
-	local completed = recordCompletions(controller)
-	controller:play("action", WAVE)
+case("stop, a replacement, clear and deconstruct each report their own reason, never completed", function()
+	local controller = newController()
+	local ended = recordEnds(controller)
+	local first = controller:play("action", WAVE)
 	controller:update()
 	controller:stop("action")
 	controller:update()
-	controller:play("action", WAVE)
+	local second = controller:play("action", WAVE)
 	controller:update()
-	controller:play("action", CHEER)
+	local third = controller:play("action", CHEER)
 	controller:update()
 	controller:clear()
 	controller:update()
-	controller:play("action", CHEER)
+	local fourth = controller:play("action", CHEER)
 	controller:update()
 	controller:deconstruct()
-	expectList(completed, "")
-	animator.takeLog()
+	expectList(
+		ended,
+		`action:{first}:stopped:nil,action:{second}:replaced:{third},action:{third}:stopped:nil,`
+			.. `action:{fourth}:stopped:nil`
+	)
 end)
 
-case("an end the engine reported is dropped when the caller replaces or stops the play first", function()
+case("an end the engine reported is completed when the caller replaces or stops the play first", function()
 	local controller, animator = newController()
-	local completed = recordCompletions(controller)
-	controller:play("action", WAVE)
+	local ended = recordEnds(controller)
+	local wave = controller:play("action", WAVE)
 	controller:update()
 	animator.takeLog()
 
 	animator.tracks[1].endNaturally()
-	controller:play("action", CHEER)
+	local cheer = controller:play("action", CHEER)
+	-- Reported inside play, with the layer already showing the new play.
+	expectList(ended, `action:{wave}:completed:{cheer}`)
 	controller:update()
-	expectList(completed, "")
+	expectList(ended, "")
 	-- The new play starts and is left playing.
 	expectLog(animator, loadLog("t2", 202, false, "Action") .. ",t2.Play(nil,1,1)")
 	assert(controller:setClipSpeed("action", 1) == 1, "the new play is the layer's play")
 
 	animator.tracks[2].endNaturally()
 	controller:stop("action")
+	expectList(ended, `action:{cheer}:completed:nil`)
 	controller:update()
-	expectList(completed, "")
+	expectList(ended, "")
 	expectLog(animator, "")
 end)
 
@@ -539,8 +646,10 @@ case("a command made inside a marker or a completion subscriber is applied by th
 	controller:onMarker("Hit", function(layer)
 		controller:stop(layer)
 	end)
-	controller:onPlayCompleted(function(layer)
-		controller:play(layer, CHEER)
+	controller:onPlayEnded(function(layer, _playId, reason)
+		if reason == "completed" then
+			controller:play(layer, CHEER)
+		end
 	end)
 	controller:play("base", WALK)
 	controller:play("action", WAVE)
@@ -668,26 +777,34 @@ case("clear stops every track at once, empties every layer, and keeps tracks and
 	expectLog(animator, "t1.Play(0.2,1,0.5)")
 end)
 
-case("deconstruct destroys every track; commands and subscriptions raise afterwards", function()
-	local controller, animator = newController()
-	controller:onMarker("Hit", function() end)
-	controller:play("base", WALK)
-	controller:update()
-	animator.takeLog()
+case(
+	"deconstruct reports every play, then destroys every track; commands and subscriptions raise afterwards",
+	function()
+		local controller, animator = newController()
+		local ended = recordEnds(controller)
+		controller:onMarker("Hit", function() end)
+		local walk = controller:play("base", WALK)
+		controller:update()
+		animator.takeLog()
 
-	controller:deconstruct()
-	expectLog(animator, "t1.Stop(0),t1.Stopped:Disconnect,t1.Ended:Disconnect,t1.Marker(Hit):Disconnect,t1.Destroy()")
-	controller:deconstruct()
-	controller:clear()
-	controller:update()
-	expectLog(animator, "")
-	expectRaise(function()
-		controller:play("base", WALK)
-	end, "LayerController is deconstructed")
-	expectRaise(function()
-		controller:onPlayCompleted(function() end)
-	end, "LayerController is deconstructed")
-end)
+		controller:deconstruct()
+		expectList(ended, `base:{walk}:stopped:nil`)
+		expectLog(
+			animator,
+			"t1.Stop(0),t1.Stopped:Disconnect,t1.Ended:Disconnect,t1.Marker(Hit):Disconnect,t1.Destroy()"
+		)
+		controller:deconstruct()
+		controller:clear()
+		controller:update()
+		expectLog(animator, "")
+		expectRaise(function()
+			controller:play("base", WALK)
+		end, "LayerController is deconstructed")
+		expectRaise(function()
+			controller:onPlayEnded(function() end)
+		end, "LayerController is deconstructed")
+	end
+)
 
 case("every controller loads a definition's tracks from the one Animation its build made", function()
 	local first, firstAnimator = newController()
@@ -788,7 +905,7 @@ end
 case("update allocates nothing when nothing changed, nor when a speed changes on every update", function()
 	local controller, animator = newController()
 	controller:onMarker("Footstep", function() end)
-	controller:onPlayCompleted(function() end)
+	controller:onPlayEnded(function() end)
 	controller:play("base", WALK)
 	controller:play("action", WAVE)
 	controller:play("overlay", CHEER)

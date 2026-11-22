@@ -13,15 +13,17 @@ loaded a new track for every play. It does not carry over.
    status box shows the same content id starting at `t=0` with its weight rising from 0.
 2. **A second track while the first fades.** "play walk again (restarts)": the status box shows two
    tracks of the walk for the length of the fade, then one.
-3. **A natural end is reported once.** "play wave": one `completed` line when the wave ends, and
-   none for "stop action", for "wave, then cheer in the same frame", or for "clear".
-4. **No false end after a clear.** "play wave", "clear", "play wave" at once: the second wave plays
-   through and logs one `completed`, at its own end. This is the case of a `Stopped` or `Ended`
-   signal arriving after the track was played again.
+3. **Every end is reported once.** "play wave": one `ended completed` line when the wave ends.
+   "stop action" logs one `ended stopped`, "wave, then cheer in the same frame" one `ended replaced`
+   for the wave, and "clear" one `ended stopped` for each layer that plays.
+4. **No false end after a clear.** "play wave", "clear", "play wave" at once: the first wave logs
+   `ended stopped` at the clear, and the second plays through and logs one `ended completed`, at its
+   own end. This is the case of a `Stopped` or `Ended` signal arriving after the track was played
+   again.
 5. **Positions.** "wave from 50%" starts mid-clip. "jump placed on its end (completes)" logs
-   `completed` in the same frame and the track fades out. "base to 0.2 s" moves the walk.
+   `ended completed` in the same frame and the track fades out. "base to 0.2 s" moves the walk.
 6. **Backwards.** "wave backwards from its end" on a fresh place, so the track's length has not
-   loaded: the wave plays backwards from its end and logs `completed` at its start.
+   loaded: the wave plays backwards from its end and logs `ended completed` at its start.
 7. **Speed.** "speed 2", "speed 0 (pause)", "speed -1 (reverse)" change the status box's speed.
    "speed +0.5% (inside the tolerance)" changes nothing and logs the old speed as the one in effect.
 8. **Time scale and weight.** "base time scale 0" freezes the walk and "base time scale 1" resumes
@@ -51,6 +53,10 @@ loaded a new track for every play. It does not carry over.
       That is more than the 64 that Roblox staff gave as the engine's limit of tracks playing on one
       `Animator`. Not known: whether the engine warns, refuses the later `Play` calls, or drops
       tracks, and whether the controller's tracks are usable afterwards.
+15. **A kept track on a second rig.** "play walk", then "clear". In the Explorer, move the
+    `AnimationController` that holds the dummy's `Animator` to a second rig with the same joint
+    names, then "play walk" again: the second rig walks. `clear` keeps loaded tracks, so this is
+    the kept track played on the rig its `Animator` is on now; VoxelMMO will rely on it.
 
 ## Still to measure
 

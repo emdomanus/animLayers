@@ -48,16 +48,17 @@ controller:stop("base", 0.5)
 ## 5. Hear about ends and markers
 
 ```luau
-local unsubscribe = controller:onPlayCompleted(function(layer, playId)
-	-- called from update; the layer is already empty
+local unsubscribe = controller:onPlayEnded(function(layer, playId, reason)
+	-- "completed" from update; "stopped" and "replaced" inside the call that ended the play
 end)
 controller:onMarker("Footstep", function(layer, playId, clip, value)
 	-- called inside the engine's marker signal
 end)
 ```
 
-`onPlayCompleted` reports only an end the engine reached by itself. Your own `stop`, `play` and
-`clear` report nothing: you made them happen and you hold the play's id.
+`onPlayEnded` reports every play once, when it leaves its layer: `"completed"` for an end the
+engine reached by itself, from `update`; `"stopped"` inside your `stop`, `clear` or
+`deconstruct`; `"replaced"` inside the `play` that displaced it.
 
 ## 6. Tear down
 

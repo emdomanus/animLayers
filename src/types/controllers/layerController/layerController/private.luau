@@ -2,12 +2,14 @@
 --!optimize 2
 local LuauUtils = require("../../../../../luau_packages/luauUtils")
 local ClipDefinitionTypes = require("../../../def/playback/clipDefinition/public")
+local PlayEndedReasonTypes = require("../../../def/playback/playEndedReason/public")
 local TrackManagerTypes = require("../../../managers/trackManager/trackManager/public")
 local LayerControllerTypes = require("./public")
 
 type CallbackList<Args...> = LuauUtils.CallbackList<Args...>
 type ClipDefinition = ClipDefinitionTypes.ClipDefinition
 type LayerControllerOwned = LayerControllerTypes.LayerControllerOwned
+type PlayEndedReason = PlayEndedReasonTypes.PlayEndedReason
 type TrackManagerOwned = TrackManagerTypes.TrackManagerOwned
 
 -- One layer: what the caller asked for, and what the track manager was last given.
@@ -65,7 +67,7 @@ export type LayerControllerImpl = LayerControllerOwned & {
 	-- `_layerOrder[slot]` is the layer with that slot.
 	_layerOrder: { LayerControllerLayer },
 	_markers: { [string]: LayerControllerMarker },
-	_playCompleted: CallbackList<string, number>,
+	_playEnded: CallbackList<string, number, PlayEndedReason>,
 	-- The id the last `play` returned.
 	_lastPlayId: number,
 	-- False when `update` has nothing to do.

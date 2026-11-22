@@ -15,18 +15,24 @@
 -- the manager records its track.
 --
 -- When the engine ends a track by itself, the manager calls `slotEnded` inside the engine's signal,
--- which only records the end on the layer. `update` calls the `onPlayCompleted` subscribers. A marker
--- subscriber is the exception: it is called inside the engine's marker signal.
+-- which only records the end on the layer; `update` reports it to the `onPlayEnded` subscribers.
+-- Every other end is reported inside the call that makes it (`play`, `stop`, `clear`,
+-- `deconstruct`), after the layer shows its new state. A play is reported when its id leaves
+-- `layer.playId`, the one field that holds it, so each play is reported exactly once. A marker
+-- subscriber is called inside the engine's marker signal.
 local LuauUtils = require("../../../luau_packages/luauUtils")
+local PlayEndedReason = require("../../common/playEndedReason/playEndedReason")
 local TrackManager = require("../../managers/trackManager/trackManager")
 local LayerControllerPrivateTypes = require("../../types/controllers/layerController/layerController/private")
 local LayerControllerTypes = require("../../types/controllers/layerController/layerController/public")
 local ClipDefinitionTypes = require("../../types/def/playback/clipDefinition/public")
+local PlayEndedReasonTypes = require("../../types/def/playback/playEndedReason/public")
 
 type CallbackList<Args...> = LuauUtils.CallbackList<Args...>
 type ClipDefinition = ClipDefinitionTypes.ClipDefinition
 type LayerDefinition = LayerControllerTypes.LayerDefinition
 type LayerControllerOwned = LayerControllerTypes.LayerControllerOwned
+type PlayEndedReason = PlayEndedReasonTypes.PlayEndedReason
 type Unsubscribe = LayerControllerTypes.Unsubscribe
 type LayerControllerImpl = LayerControllerPrivateTypes.LayerControllerImpl
 type LayerControllerLayer = LayerControllerPrivateTypes.LayerControllerLayer
@@ -116,11 +122,49 @@ local function slotEnded(self: LayerControllerImpl, slot: number): ()
 		layer.completed = true
 	else
 		-- A looping clip is played again by the next update. A play the caller has already stopped
-		-- or replaced ends without a report.
+		-- or replaced was reported when that happened.
 		layer.appliedPlayId = nil
 		layer.appliedClip = nil
 	end
 	markChanged(self, layer)
+end
+
+-- Forgets what the track manager was given for every layer, keeping what was asked for. The caller
+-- has stopped every track, or destroys them after.
+local function forgetAppliedPlays(self: LayerControllerImpl): ()
+	for _, layer in self._layerOrder do
+		layer.outgoingFadeSet = false
+		layer.appliedPlayId = nil
+		layer.appliedClip = nil
+		layer.playing = false
+		layer.reverseHold = false
+		layer.changed = false
+	end
+	self._changed = false
+end
+
+-- Empties, in layer order, every layer whose play has an id up to `lastPlayId`, and reports that
+-- play once its layer is empty: "completed" when the engine had already ended it, else "stopped".
+-- A play a callback starts has a larger id and is left alone. Returns true when it reported one.
+local function reportPlaysEnded(self: LayerControllerImpl, lastPlayId: number): boolean
+	local reported = false
+	for _, layer in self._layerOrder do
+		local playId = layer.playId
+		if playId ~= nil and playId <= lastPlayId then
+			reported = true
+			local reason = if layer.completed then PlayEndedReason.completed else PlayEndedReason.stopped
+			-- Only a callback earlier in this pass that called `update` can have given this play to the
+			-- track manager again.
+			if layer.playing then
+				layer.playing = false
+				self._trackManager:stop(layer.slot, 0)
+			end
+			emptyLayer(layer)
+			layer.changed = false
+			self._playEnded:fire(layer.name, playId, reason)
+		end
+	end
+	return reported
 end
 
 -- Gives the track manager what this layer's commands ask for. Returns true while the layer still
@@ -275,7 +319,7 @@ function LayerController.new(animator: Animator, layerDefinitions: { LayerDefini
 		layerOrder[slot] = layer
 	end
 
-	local playCompleted: CallbackList<string, number> = LuauUtils.callbackList.new()
+	local playEnded: CallbackList<string, number, PlayEndedReason> = LuauUtils.callbackList.new()
 	local self: LayerControllerImpl
 	local trackManager = TrackManager.new(animator, function(slot: number): ()
 		slotEnded(self, slot)
@@ -286,7 +330,7 @@ function LayerController.new(animator: Animator, layerDefinitions: { LayerDefini
 			_layers = layers,
 			_layerOrder = layerOrder,
 			_markers = {},
-			_playCompleted = playCompleted,
+			_playEnded = playEnded,
 			_lastPlayId = 0,
 			_changed = false,
 			_deconstructed = false,
@@ -309,6 +353,8 @@ function LayerController.play(
 	end
 	checkFadeTime(fadeTime)
 
+	local endedPlayId = layer.playId
+	local endedReason = if layer.completed then PlayEndedReason.completed else PlayEndedReason.replaced
 	local playId = self._lastPlayId + 1
 	self._lastPlayId = playId
 	layer.playId = playId
@@ -318,15 +364,20 @@ function LayerController.play(
 	layer.positionKind = nil
 	layer.completed = false
 	markChanged(self, layer)
+	if endedPlayId ~= nil then
+		self._playEnded:fire(layer.name, endedPlayId, endedReason)
+	end
 	return playId
 end
 
 function LayerController.stop(self: LayerControllerImpl, layerName: string, fadeTime: number?): ()
 	local layer = requireLayer(self, layerName)
 	checkFadeTime(fadeTime)
-	if layer.playId == nil and not layer.playing then
+	local endedPlayId = layer.playId
+	if endedPlayId == nil and not layer.playing then
 		return
 	end
+	local endedReason = if layer.completed then PlayEndedReason.completed else PlayEndedReason.stopped
 	layer.playId = nil
 	layer.clip = nil
 	layer.positionKind = nil
@@ -334,6 +385,9 @@ function LayerController.stop(self: LayerControllerImpl, layerName: string, fade
 	layer.outgoingFadeSet = true
 	layer.outgoingFadeTime = if fadeTime ~= nil then fadeTime else layer.fadeOut
 	markChanged(self, layer)
+	if endedPlayId ~= nil then
+		self._playEnded:fire(layer.name, endedPlayId, endedReason)
+	end
 end
 
 function LayerController.getPlayId(self: LayerControllerImpl, layerName: string): number?
@@ -428,14 +482,14 @@ function LayerController.setLayerTimeScale(self: LayerControllerImpl, layerName:
 	end
 end
 
-function LayerController.onPlayCompleted(
+function LayerController.onPlayEnded(
 	self: LayerControllerImpl,
-	callback: (layer: string, playId: number) -> ()
+	callback: (layer: string, playId: number, reason: PlayEndedReason) -> ()
 ): Unsubscribe
 	if self._deconstructed then
 		error("LayerController is deconstructed", 2)
 	end
-	return self._playCompleted:add(callback)
+	return self._playEnded:add(callback)
 end
 
 function LayerController.onMarker(
@@ -507,7 +561,7 @@ function LayerController.update(self: LayerControllerImpl): ()
 				self._trackManager:stop(layer.slot, layer.fadeOut)
 			end
 			emptyLayer(layer)
-			self._playCompleted:fire(layer.name, playId)
+			self._playEnded:fire(layer.name, playId, PlayEndedReason.completed)
 		end
 	end
 	-- A callback above, or an engine signal during the calls, may have asked for more.
@@ -525,26 +579,30 @@ function LayerController.clear(self: LayerControllerImpl): ()
 	if self._deconstructed then
 		return
 	end
-	for _, layer in self._layerOrder do
-		emptyLayer(layer)
-		layer.changed = false
-	end
-	self._changed = false
+	-- Every track is stopped before the first report, so a callback sees the engine idle.
+	forgetAppliedPlays(self)
 	self._trackManager:stopAll()
+	reportPlaysEnded(self, self._lastPlayId)
 end
 
 function LayerController.deconstruct(self: LayerControllerImpl): ()
 	if self._deconstructed then
 		return
 	end
-	self._deconstructed = true
-	for _, layer in self._layerOrder do
-		emptyLayer(layer)
-		layer.changed = false
+	-- The reports come first, while every method still works. A play a callback starts is reported
+	-- on the next pass, so no play outlives the controller.
+	forgetAppliedPlays(self)
+	local reported: boolean
+	repeat
+		reported = reportPlaysEnded(self, self._lastPlayId)
+	until not reported
+	-- A callback may have called `deconstruct`, which then did the rest.
+	if self._deconstructed then
+		return
 	end
-	self._changed = false
+	self._deconstructed = true
 	table.clear(self._markers)
-	self._playCompleted:clear()
+	self._playEnded:clear()
 	self._trackManager:deconstruct()
 end
 

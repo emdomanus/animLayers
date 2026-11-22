@@ -1,8 +1,10 @@
 --!strict
 --!optimize 2
 local ClipDefinitionTypes = require("../../../def/playback/clipDefinition/public")
+local PlayEndedReasonTypes = require("../../../def/playback/playEndedReason/public")
 
 type ClipDefinition = ClipDefinitionTypes.ClipDefinition
+type PlayEndedReason = PlayEndedReasonTypes.PlayEndedReason
 
 -- What a subscription returns. Calling it removes that subscription; later calls do nothing.
 export type Unsubscribe = () -> ()
@@ -39,7 +41,7 @@ export type LayerController = {
 	read stop: (self: LayerController, layer: string, fadeTime: number?) -> (),
 	-- The id of the play on the layer now: the number the last `play` on it returned, or nil when
 	-- the layer plays nothing. It is nil after `stop`, after `clear`, and from the moment a play
-	-- that does not loop completes, so inside the `onPlayCompleted` callback too. It calls no engine
+	-- that does not loop completes, so inside the `onPlayEnded` callback too. It calls no engine
 	-- and allocates nothing.
 	read getPlayId: (self: LayerController, layer: string) -> number?,
 
@@ -64,11 +66,18 @@ export type LayerController = {
 	-- later. 0 pauses the layer.
 	read setLayerTimeScale: (self: LayerController, layer: string, rate: number) -> (),
 
-	-- Called from `update` when a play that does not loop reached the end its speed points to, with
-	-- the layer already empty. Not called for `stop`, for a replacement by another `play`, for
-	-- `clear` or for `deconstruct`, nor for an end whose play was stopped or replaced before the
-	-- `update` that would have reported it.
-	read onPlayCompleted: (self: LayerController, callback: (layer: string, playId: number) -> ()) -> Unsubscribe,
+	-- Called once for every play, when it leaves its layer, with the layer already showing its
+	-- new state: `getPlayId` returns nil after a stop or a completion, and the new play's id after
+	-- a replacement. "completed" is reported from `update`, when a play that does not loop reached
+	-- the end its speed points to. "replaced" is reported inside `play`, for the play it displaces.
+	-- "stopped" is reported inside `stop`, and inside `clear` and `deconstruct` for each layer with a
+	-- play, in layer order. A play whose end the engine already reported is "completed" even when
+	-- `stop`, `play`, `clear` or `deconstruct` ends it before the `update` that would report it.
+	-- A callback may call any method of the controller.
+	read onPlayEnded: (
+		self: LayerController,
+		callback: (layer: string, playId: number, reason: PlayEndedReason) -> ()
+	) -> Unsubscribe,
 	-- Called inside the engine's marker signal, with nothing queued, when a marker with this name
 	-- is reached on the track of a layer's current play. `value` is the marker's value.
 	read onMarker: (
@@ -81,16 +90,19 @@ export type LayerController = {
 -- What `new` returns to the controller's owner.
 export type LayerControllerOwned = LayerController & {
 	-- Makes the engine calls the commands since the last `update` ask for, then calls the
-	-- `onPlayCompleted` subscribers. It returns at once, calling nothing, when nothing changed. An
+	-- `onPlayEnded` subscribers. It returns at once, calling nothing, when nothing changed. An
 	-- engine call that raises makes `update` raise: the commands stay as the caller left them, the
 	-- controller has recorded as applied exactly the engine calls that returned, and the next
 	-- `update` makes the remaining ones again. A Stop that raised is the exception: its track was
 	-- marked as stopped before the call, and it is not stopped again.
 	read update: (self: LayerControllerOwned) -> (),
-	-- Stops every track at once and empties every layer. Loaded tracks, layer weights and time
-	-- scales are kept.
+	-- Stops every track at once and empties every layer, reporting each layer's play as "stopped",
+	-- in layer order. A play a callback starts meanwhile is kept. Loaded tracks, layer weights and
+	-- time scales are kept.
 	read clear: (self: LayerControllerOwned) -> (),
-	-- Destroys every track the controller loaded. Commands and subscriptions raise afterwards.
+	-- Reports every play as "stopped", in layer order, including one a callback starts meanwhile;
+	-- then drops every subscriber and destroys every track the controller loaded. Commands and
+	-- subscriptions raise afterwards.
 	read deconstruct: (self: LayerControllerOwned) -> (),
 }
 

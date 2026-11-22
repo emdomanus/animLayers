@@ -84,11 +84,28 @@ Each returns a function that removes the subscription; calling it again does not
 
 | Method | The callback is called |
 | --- | --- |
-| `onPlayCompleted(callback: (layer: string, playId: number) -> ())` | from `update`, when a play that does not loop reached the end its speed points to. The layer is already empty. |
+| `onPlayEnded(callback: (layer: string, playId: number, reason: PlayEndedReason) -> ())` | once for every play, when it leaves its layer, with the layer already showing its new state. |
 | `onMarker(markerName, callback: (layer: string, playId: number, clip: ClipDefinition, value: string) -> ())` | inside the engine's marker signal, when a marker with that name is reached on the track of a layer's current play. |
 
-- `onPlayCompleted` is not called for `stop`, for a replacement, for `clear` or for `deconstruct`,
-  nor for an end whose play was stopped or replaced before the `update` that would have reported it.
+`PlayEndedReason = "completed" | "stopped" | "replaced"`:
+
+| `reason` | Reported |
+| --- | --- |
+| `"completed"` | from `update`, when a clip that does not loop reached the end its speed points to |
+| `"stopped"` | inside `stop(layer)`, and inside `clear()` and `deconstruct()` for each layer that has a play, in layer order |
+| `"replaced"` | inside `play(layer, ...)`, for the play it displaces |
+
+`AnimLayers.common.playEndedReason` holds the three values under their own names
+(`playEndedReason.completed`, `.stopped`, `.replaced`), for code that compares a reason.
+
+- Every play is reported exactly once. A play whose end the engine already reported is
+  `"completed"` even when `stop`, `play`, `clear` or `deconstruct` ends it before the `update` that
+  would have reported it.
+- Inside the callback the layer already shows its new state: `getPlayId(layer)` returns nil after a
+  stop or a completion, and the new play's id after a replacement.
+- A callback may call any method of the controller. A play it starts during `clear` is kept; one it
+  starts during `deconstruct` is reported `"stopped"` too, so a callback that plays again on every
+  report keeps `deconstruct` from returning.
 - A track that is fading out delivers no marker.
 - A command made inside either callback is applied by the next `update`.
 
@@ -99,8 +116,8 @@ Each returns a function that removes the subscription; calling it again does not
 | Method | Does |
 | --- | --- |
 | `update()` | Makes the engine calls the commands since the last `update` ask for, then calls the completion subscribers. With nothing changed it returns at once and calls nothing. |
-| `clear()` | Stops every track with a fade of 0 and empties every layer. Loaded tracks, layer weights and time scales are kept. |
-| `deconstruct()` | Destroys every track the controller loaded. Commands and subscriptions raise afterwards; `update` and `clear` do nothing. |
+| `clear()` | Stops every track with a fade of 0 and empties every layer, reporting each layer's play as `"stopped"`. Loaded tracks, layer weights and time scales are kept. |
+| `deconstruct()` | Reports every play as `"stopped"`, drops every subscriber, then destroys every track the controller loaded. Commands and subscriptions raise afterwards; `update` and `clear` do nothing. |
 
 `update` does not catch. When an engine call raises, `update` raises with that error; the commands
 are as you left them, and the next `update` makes the calls that had not returned. A `Stop` that

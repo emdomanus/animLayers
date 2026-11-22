@@ -40,7 +40,7 @@ maps each old call to what replaces it.
 | `controller:offsetTrackPosition(trackKey, delta)` | gone |
 | `controller:setDefaultTimeReader`, `setLayerTimeReader`, `setActivePlayTimeReader` | gone. When a clock's rate changes, call `controller:setLayerTimeScale(layer, rate)`. A reader's `position` is not used by anything. |
 | `controller:setParameter`, `setFloat`, `setBool`, `setTrigger` and the getters | gone, with the blends and the state machine that read them |
-| `controller:on("trackCompleted", function(event) ... event.trackKey ... end)` | `controller:onPlayCompleted(function(layer, playId) ... end)` |
+| `controller:on("trackCompleted", function(event) ... event.trackKey ... end)` | `controller:onPlayEnded(function(layer, playId, reason) ... end)`, where `reason` is `"completed"` for the old event |
 | `controller:onMarker(name, function(track, value) ...)`, `controller:onTrackMarker(trackKey, name, ...)` | `controller:onMarker(name, function(layer, playId, clip, value) ...)` |
 | `controller:update(sampleTime)` | `controller:update()` |
 | `controller:getDebugSnapshot()` | gone. `Animator:GetPlayingAnimationTracks()` shows what the engine plays. |

@@ -8,6 +8,7 @@ type ClipDefinition = AnimLayers.ClipDefinition
 type LayerController = AnimLayers.LayerController
 type LayerControllerOwned = AnimLayers.LayerControllerOwned
 type LayerDefinition = AnimLayers.LayerDefinition
+type PlayEndedReason = AnimLayers.PlayEndedReason
 type Unsubscribe = AnimLayers.Unsubscribe
 
 local animator = Instance.new("Animator")
@@ -31,9 +32,14 @@ owned:setClipNormalizedTime("base", 0.5)
 owned:setLayerTimeScale("base", 0)
 
 -- The parameters of a subscriber are inferred from the subscription.
-local unsubscribe: Unsubscribe = owned:onPlayCompleted(function(layer, playId)
+local unsubscribe: Unsubscribe = owned:onPlayEnded(function(layer, playId, reason)
 	local _layer: string = layer
 	local _id: number = playId
+	local _reason: PlayEndedReason = reason
+	local _completed: boolean = reason == AnimLayers.common.playEndedReason.completed
+	if reason == "replaced" then
+		local _current: number? = owned:getPlayId(layer)
+	end
 end)
 local _unsubscribeMarker: Unsubscribe = owned:onMarker("Footstep", function(layer, playId, clip, value)
 	local _layer: string = layer

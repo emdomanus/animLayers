@@ -190,8 +190,8 @@ local controller: LayerControllerOwned = AnimLayers.controllers.layerController.
 local commandedSpeed = 1
 
 local function subscribe(target: LayerControllerOwned): ()
-	target:onPlayCompleted(function(layer, playId)
-		log(`completed  layer={layer} play={playId}`)
+	target:onPlayEnded(function(layer, playId, reason)
+		log(`ended {reason}  layer={layer} play={playId}`)
 	end)
 	target:onMarker(MARKER_NAME, function(layer, playId, clip, value)
 		log(`marker {MARKER_NAME}  layer={layer} play={playId} asset={clip.assetId} value="{value}"`)

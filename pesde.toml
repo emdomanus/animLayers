@@ -16,4 +16,4 @@ build_files = ["src"]
 default = "https://github.com/pesde-pkg/index"
 
 [dependencies]
-luauUtils = { repo = "emdomanus/luauUtils", rev = "51f60518efde736b5497c0cbd2121c0ea4c517f7" }
+luauUtils = { repo = "emdomanus/luauUtils", rev = "51f60518efde736b5497c0cbd2121c0ea4c517f7", target = "luau" }
